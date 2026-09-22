@@ -1,0 +1,2 @@
+# boto3 is provided by the AWS Lambda Python 3.12 runtime.
+# Add additional dependencies here as needed.

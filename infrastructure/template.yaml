@@ -1,0 +1,164 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  Serverless Image Classifier — base AWS SAM infrastructure.
+  S3 upload → Lambda classification → DynamoDB storage, with a REST API.
+
+Globals:
+  Function:
+    Timeout: 30
+    Runtime: python3.12
+    MemorySize: 256
+    Architectures:
+      - x86_64
+
+Resources:
+  # -----------------------------------------------------------
+  # Storage — S3 bucket for image uploads
+  # -----------------------------------------------------------
+  ImageUploadBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "${AWS::StackName}-image-uploads"
+      CorsConfiguration:
+        CorsRules:
+          - AllowedHeaders:
+              - "*"
+            AllowedMethods:
+              - PUT
+              - POST
+            AllowedOrigins:
+              - "*"
+            MaxAge: 3600
+
+  # -----------------------------------------------------------
+  # Storage — DynamoDB table for classification results
+  # -----------------------------------------------------------
+  ClassificationResultsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: ClassificationResults
+      AttributeDefinitions:
+        - AttributeName: imageId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: imageId
+          KeyType: HASH
+      BillingMode: PAY_PER_REQUEST
+
+  # -----------------------------------------------------------
+  # API — REST API Gateway
+  # -----------------------------------------------------------
+  ImageClassifierApi:
+    Type: AWS::Serverless::Api
+    Properties:
+      StageName: dev
+      Description: Image Classifier REST API
+
+  # -----------------------------------------------------------
+  # Compute — S3-triggered classification Lambda
+  # -----------------------------------------------------------
+  ClassifyImageFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-ClassifyImage"
+      CodeUri: ../backend/classify_image/
+      Handler: app.lambda_handler
+      Description: Classifies uploaded images using Amazon Rekognition
+      Environment:
+        Variables:
+          TABLE_NAME: !Ref ClassificationResultsTable
+          BUCKET_NAME: !Sub "${AWS::StackName}-image-uploads"
+      Events:
+        S3Upload:
+          Type: S3
+          Properties:
+            Bucket: !Ref ImageUploadBucket
+            Events: s3:ObjectCreated:*
+      Policies:
+        - Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Action:
+                - s3:GetObject
+              Resource: !Sub "arn:aws:s3:::${AWS::StackName}-image-uploads/*"
+        - DynamoDBCrudPolicy:
+            TableName: !Ref ClassificationResultsTable
+        - Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Action:
+                - rekognition:DetectLabels
+              Resource: "*"
+
+  # -----------------------------------------------------------
+  # Compute — POST /upload API handler
+  # -----------------------------------------------------------
+  UploadFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-Upload"
+      CodeUri: ../backend/upload/
+      Handler: app.lambda_handler
+      Description: Generates a pre-signed URL for S3 image upload
+      Environment:
+        Variables:
+          BUCKET_NAME: !Ref ImageUploadBucket
+      Events:
+        PostUpload:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ImageClassifierApi
+            Path: /upload
+            Method: post
+      Policies:
+        - Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Action:
+                - s3:PutObject
+              Resource: !Sub "arn:aws:s3:::${ImageUploadBucket}/*"
+
+  # -----------------------------------------------------------
+  # Compute — GET /results/{imageId} API handler
+  # -----------------------------------------------------------
+  GetResultsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-GetResults"
+      CodeUri: ../backend/get_results/
+      Handler: app.lambda_handler
+      Description: Retrieves classification results from DynamoDB
+      Environment:
+        Variables:
+          TABLE_NAME: !Ref ClassificationResultsTable
+      Events:
+        GetResult:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ImageClassifierApi
+            Path: /results/{imageId}
+            Method: get
+      Policies:
+        - DynamoDBReadPolicy:
+            TableName: !Ref ClassificationResultsTable
+
+Outputs:
+  ApiEndpoint:
+    Description: API Gateway endpoint URL (dev stage)
+    Value: !Sub "https://${ImageClassifierApi}.execute-api.${AWS::Region}.amazonaws.com/dev/"
+  ImageUploadBucketName:
+    Description: S3 bucket for image uploads
+    Value: !Ref ImageUploadBucket
+  ClassificationResultsTableName:
+    Description: DynamoDB table for classification results
+    Value: !Ref ClassificationResultsTable
+  ClassifyImageFunctionArn:
+    Description: Classify Image Lambda function ARN
+    Value: !GetAtt ClassifyImageFunction.Arn
+  UploadFunctionArn:
+    Description: Upload Lambda function ARN
+    Value: !GetAtt UploadFunction.Arn
+  GetResultsFunctionArn:
+    Description: Get Results Lambda function ARN
+    Value: !GetAtt GetResultsFunction.Arn
