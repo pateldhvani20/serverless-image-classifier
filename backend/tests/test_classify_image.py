@@ -14,7 +14,7 @@ from unittest.mock import MagicMock
 import boto3
 import pytest
 from botocore.exceptions import ClientError
-from moto import mock_aws
+from moto import mock_aws  # type: ignore
 
 # ---------------------------------------------------------------------------
 # Path setup & env bootstrap — env vars MUST be set before importing ``app``
@@ -29,7 +29,7 @@ _CLASSIFY_DIR = os.path.normpath(
 )
 sys.path.insert(0, _CLASSIFY_DIR)
 
-import app as classify_module  # noqa: E402
+import app as classify_module  # noqa: E402  # type: ignore
 
 # ---------------------------------------------------------------------------
 # Constants

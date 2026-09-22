@@ -1,0 +1,10 @@
+{
+  "venvPath": "backend",
+  "venv": ".venv",
+  "extraPaths": [
+    "backend",
+    "backend/classify_image",
+    "backend/api/upload",
+    "backend/api/get_result"
+  ]
+}
