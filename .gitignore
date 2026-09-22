@@ -1,28 +1,54 @@
-# ========================
-# Node.js
-# ========================
-node_modules/
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-.npm
-.yarn-integrity
-package-lock.json
-*.tgz
+# ==============================================================================
+# Git Ignore Configuration: Serverless Image Classifier
+# ==============================================================================
 
-# ========================
-# Python
-# ========================
+# ------------------------------------------------------------------------------
+# Secrets, Credentials, & Environment Variables (NEVER COMMIT)
+# ------------------------------------------------------------------------------
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.pfx
+*.pkcs12
+credentials
+aws-credentials*
+aws_credentials*
+
+# ------------------------------------------------------------------------------
+# AWS SAM CLI & CloudFormation Build Artifacts
+# ------------------------------------------------------------------------------
+.aws-sam/
+samconfig.toml
+packaged.yaml
+*.template.yaml.out
+
+# ------------------------------------------------------------------------------
+# Python Virtual Environments, Bytecode, & Packages
+# ------------------------------------------------------------------------------
 __pycache__/
 *.py[cod]
 *$py.class
 *.so
-*.egg-info/
-dist/
-build/
-eggs/
-*.egg
 .Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
 pip-log.txt
 pip-delete-this-directory.txt
 .venv/
@@ -31,16 +57,34 @@ ENV/
 env/
 *.whl
 
-# ========================
-# AWS SAM / CloudFormation
-# ========================
-.aws-sam/
-samconfig.toml
-packaged.yaml
+# ------------------------------------------------------------------------------
+# Testing, Coverage, & Cache
+# ------------------------------------------------------------------------------
+.pytest_cache/
+.coverage
+.coverage.*
+coverage.xml
+*.cover
+nosetests.xml
+htmlcov/
+.tox/
+.nox/
+scratch/
 
-# ========================
-# IDE / Editor
-# ========================
+# ------------------------------------------------------------------------------
+# Node.js / Frontend Build Artifacts
+# ------------------------------------------------------------------------------
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.npm
+.yarn-integrity
+package-lock.json
+
+# ------------------------------------------------------------------------------
+# IDE & Operating System Artifacts
+# ------------------------------------------------------------------------------
 .vscode/
 .idea/
 *.swp
@@ -48,29 +92,12 @@ packaged.yaml
 *~
 *.sublime-project
 *.sublime-workspace
-
-# ========================
-# OS Generated
-# ========================
 .DS_Store
-Thumbs.db
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
 ehthumbs.db
+Thumbs.db
 Desktop.ini
 $RECYCLE.BIN/
-
-# ========================
-# Environment & Secrets
-# ========================
-.env
-.env.local
-.env.*.local
-*.pem
-*.key
-
-# ========================
-# Build / Coverage
-# ========================
-coverage/
-.nyc_output/
-*.lcov
-.cache/

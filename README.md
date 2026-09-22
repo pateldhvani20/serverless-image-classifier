@@ -1,234 +1,203 @@
 # Serverless Image Classifier
 
-An end-to-end, production-ready AWS Serverless image classification platform. Images uploaded via a modern web interface are stored in Amazon S3, classified asynchronously using Amazon Rekognition, persisted to Amazon DynamoDB, and served through a low-latency REST API Gateway.
+An end-to-end, production-ready serverless image classification application built on AWS. Users can upload images via a responsive web frontend, which triggers asynchronous machine learning inference using Amazon Rekognition, stores metadata and classification labels in Amazon DynamoDB, and delivers results in real time through an Amazon API Gateway REST API.
 
 ---
 
-## Architecture
+## Architecture Diagram
+
+The architecture follows a decoupled, event-driven pattern connecting the browser client to cloud-native AWS services:
 
 ```mermaid
 flowchart LR
-    subgraph Client ["Frontend Client"]
-        Browser["Single Page Web App\n(HTML5 / CSS3 / Vanilla JS)"]
-    end
-
-    subgraph APIGateway ["API Gateway (REST)"]
-        UploadRoute["POST /upload"]
-        ResultsRoute["GET /results/{imageId}"]
-    end
-
-    subgraph Lambdas ["AWS Lambda Functions (Python 3.12)"]
-        UploadFn["Upload Lambda\n(Base64 Decode & S3 Put)"]
-        GetResultFn["GetResult Lambda\n(DynamoDB Read)"]
-        ClassifyFn["ClassifyImage Lambda\n(S3 Event Trigger)"]
-    end
-
-    subgraph Storage ["AWS Data & AI Services"]
-        S3Bucket[("Amazon S3 Bucket\nImage Storage")]
-        Rekognition["Amazon Rekognition\n(DetectLabels API)"]
-        DynamoDB[("Amazon DynamoDB\nClassificationResults")]
-    end
-
-    Browser -->|"1. Upload Base64 Image"| UploadRoute
-    UploadRoute --> UploadFn
-    UploadFn -->|"2. PutObject (UUID Key)"| S3Bucket
-
-    S3Bucket -.->|"3. ObjectCreated Event"| ClassifyFn
-    ClassifyFn -->|"4. DetectLabels"| Rekognition
-    ClassifyFn -->|"5. PutItem (Label, Confidence, S3Key)"| DynamoDB
-
-    Browser -->|"6. Poll every 2s"| ResultsRoute
-    ResultsRoute --> GetResultFn
-    GetResultFn -->|"7. GetItem by imageId"| DynamoDB
-    GetResultFn -->|"8. 202 (processing) or 200 (results)"| Browser
+    Frontend["Frontend\n(HTML5 / CSS3 / JS)"] -->|"1. POST /upload"| APIGateway["API Gateway\n(REST API)"]
+    APIGateway -->|"2. Invoke"| UploadLambda["Lambda\n(Upload Handler)"]
+    UploadLambda -->|"3. PutObject"| S3["S3 Bucket\n(Image Storage)"]
+    S3 -.->|"4. ObjectCreated Event"| ClassifyLambda["Lambda\n(ClassifyImage Handler)"]
+    ClassifyLambda -->|"5. DetectLabels"| Rekognition["Amazon Rekognition\n(Computer Vision)"]
+    ClassifyLambda -->|"6. PutItem (Label, Confidence)"| DynamoDB[("DynamoDB\n(ClassificationResults)")]
+    Frontend -->|"7. Poll GET /results/{id}"| APIGateway
+    APIGateway -->|"8. Invoke"| GetResultLambda["Lambda\n(GetResults Handler)"]
+    GetResultLambda -->|"9. GetItem"| DynamoDB
+    GetResultLambda -->|"10. Return 202/200"| Frontend
 ```
 
-### Event-Driven Pipeline Flow
-1. **Upload Request**: The browser client uploads an image (JPEG/PNG) as base64 to `POST /upload`.
-2. **Storage**: The `UploadFunction` decodes the image binary and stores it into the S3 bucket using a generated UUID as the key. It immediately returns `{ "imageId": "<uuid>" }` with HTTP 200.
-3. **Asynchronous Trigger**: S3 automatically fires an `s3:ObjectCreated:*` event notification that triggers `ClassifyImageFunction`.
-4. **AI Inference**: The classification Lambda invokes Amazon Rekognition's `DetectLabels` API to analyze the image, extracting the top classification label and confidence score.
-5. **Persistence**: The classification result (`imageId`, `label`, `confidence`, `s3Key`, `timestamp`) is persisted to the DynamoDB `ClassificationResults` table.
-6. **Real-Time Polling**: The frontend polls `GET /results/{imageId}` every 2 seconds. The `GetResultsFunction` responds with `202 Accepted` while processing, and `200 OK` once the DynamoDB item is ready, displaying the thumbnail, predicted label, and confidence gauge.
+For a comprehensive breakdown of component responsibilities, security models, and sequence workflows, see [docs/architecture.md](docs/architecture.md).
 
 ---
 
 ## Tech Stack
 
-| Layer | Technologies |
-| :--- | :--- |
-| **Compute** | AWS Lambda (Python 3.12, x86_64, AWS SAM) |
-| **API** | Amazon API Gateway (REST API, CORS enabled) |
-| **Storage** | Amazon S3 (Encrypted object storage, event notifications) |
-| **Database** | Amazon DynamoDB (`ClassificationResults`, Pay-Per-Request billing) |
-| **Machine Learning** | Amazon Rekognition (`DetectLabels` computer vision API) |
-| **Frontend** | Semantic HTML5, Vanilla CSS3 (White & Blue theme), JavaScript (Fetch, FileReader) |
-| **IaC** | AWS Serverless Application Model (SAM / CloudFormation) |
-| **Testing** | `pytest`, `moto` (mocking S3, DynamoDB, and Rekognition), `curl` |
+- **Compute**: AWS Lambda (Python 3.12 runtimes, x86_64 architecture)
+- **API Management**: Amazon API Gateway (REST API with CORS support)
+- **Object Storage**: Amazon S3 (Encrypted image storage with bucket event notifications)
+- **Database**: Amazon DynamoDB (`ClassificationResults` table, On-Demand `PAY_PER_REQUEST` capacity)
+- **Computer Vision**: Amazon Rekognition (`DetectLabels` machine learning API)
+- **Infrastructure as Code (IaC)**: AWS Serverless Application Model (AWS SAM / CloudFormation)
+- **Frontend**: Semantic HTML5, Vanilla CSS3 (Modern White & Blue theme, responsive), Vanilla JavaScript
+- **Testing & Tooling**: `pytest`, `moto` (mocking S3, DynamoDB, Rekognition), Python 3.12, AWS CLI, SAM CLI
 
 ---
 
-## Project Structure
+## How It Works
 
-```
-serverless-image-classifier/
-├── backend/
-│   ├── api/
-│   │   ├── upload/
-│   │   │   ├── app.py              # POST /upload Lambda handler
-│   │   │   └── requirements.txt
-│   │   └── get_result/
-│   │       ├── app.py              # GET /results/{imageId} Lambda handler
-│   │       └── requirements.txt
-│   ├── classify_image/
-│   │   ├── app.py                  # S3-triggered Rekognition Lambda handler
-│   │   └── requirements.txt
-│   └── tests/
-│       ├── test_api.py             # 14 unit tests for API endpoints (moto)
-│       ├── test_classify_image.py  # 10 unit tests for classification pipeline
-│       └── local_server.py         # Mock HTTP server for curl testing
-├── frontend/
-│   ├── index.html                  # Single-page UI with drag-and-drop
-│   ├── style.css                   # Modern White & Blue design system
-│   └── app.js                      # Upload handling and 2-second polling logic
-├── infrastructure/
-│   └── template.yaml               # AWS SAM template (all cloud resources & IAM policies)
-├── scripts/
-│   ├── dev_server.py               # Local development server with simulated pipeline
-│   ├── verify_e2e.py               # Full end-to-end automated verification script
-│   ├── destroy.sh                  # Safe Bash stack teardown (empties S3 first)
-│   └── destroy.ps1                 # Safe PowerShell stack teardown
-├── .env.example                    # Template environment variables
-└── README.md                       # Comprehensive project documentation
-```
+The system implements an asynchronous, event-driven pipeline matching the actual codebase:
+
+1. **Image Selection & Upload (`POST /upload`)**:
+   - The user selects or drags-and-drops an image (`.jpg`, `.jpeg`, `.png`) into the frontend dropzone.
+   - The frontend converts the image to a base64 DataURL and sends an HTTP POST request to the `/upload` API Gateway endpoint.
+   - The [`UploadFunction`](backend/api/upload/app.py) Lambda decodes the base64 payload, validates magic bytes to identify the image type, generates a unique UUID v4 as the image key, and writes the binary file to Amazon S3.
+   - The function returns immediately with `{ "imageId": "<uuid>", "message": "Image uploaded successfully" }` and HTTP 200.
+
+2. **Automated Event-Driven Classification**:
+   - The arrival of the object in S3 triggers an `s3:ObjectCreated:*` event notification.
+   - The [`ClassifyImageFunction`](backend/classify_image/app.py) Lambda receives the event, extracts the bucket and key, and calls Amazon Rekognition's `DetectLabels` API.
+   - The function extracts the top predicted label, rounds the confidence score to two decimal places, and persists the record into the DynamoDB `ClassificationResults` table:
+     ```json
+     {
+       "imageId": "efe4998c-f191-4f34-8696-f712e87abe8c",
+       "label": "Golden Retriever",
+       "confidence": 98.7,
+       "s3Key": "efe4998c-f191-4f34-8696-f712e87abe8c",
+       "timestamp": "2026-09-22T10:05:47.850126+00:00"
+     }
+     ```
+
+3. **Client Polling & Result Display (`GET /results/{imageId}`)**:
+   - Immediately after uploading, the frontend displays a loading spinner and polls `GET /results/{imageId}` every 2 seconds (`POLL_INTERVAL_MS = 2000`).
+   - The [`GetResultsFunction`](backend/api/get_result/app.py) queries DynamoDB by `imageId`:
+     - If the item is not yet written, it responds with **HTTP 202 Accepted** (`{"status": "processing"}`), keeping the frontend in a loading state.
+     - Once the item is present, it serializes DynamoDB numeric `Decimal` values to standard floats and returns **HTTP 200 OK** with the complete classification payload.
+   - The frontend renders the uploaded image thumbnail alongside the predicted label, an animated confidence meter, and metadata.
 
 ---
 
-## Setup & Local Testing
+## Step-by-Step Setup & Deployment Instructions
 
 ### Prerequisites
-- Python 3.11 or 3.12
-- [AWS SAM CLI](https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/install-sam-cli.html) (`sam --version >= 1.100`)
-- [AWS CLI](https://aws.amazon.com/cli/) (configured with valid AWS credentials for cloud deployment)
+1. **Python 3.12** (or 3.11)
+2. **AWS SAM CLI** (`sam --version` >= 1.100)
+3. **AWS CLI** configured with deployment credentials (`aws configure`)
 
-### 1. Run Unit Tests (24 Tests)
+---
+
+### Local Development & Testing
+
+#### 1. Setup Virtual Environment
 ```bash
-# Activate python virtual environment
+# Clone the repository
+git clone https://github.com/pateldhvani20/serverless-image-classifier.git
+cd serverless-image-classifier
+
+# Create and activate Python virtual environment
 python -m venv backend/.venv
-source backend/.venv/bin/activate  # Or on Windows: backend\.venv\Scripts\activate
+
+# On Linux / macOS:
+source backend/.venv/bin/activate
+# On Windows PowerShell:
+.\backend\.venv\Scripts\Activate.ps1
 
 # Install dependencies
 pip install boto3 moto pytest
+```
 
-# Run all test suites
+#### 2. Run Automated Unit Tests (24 Tests)
+Run unit tests with mocked AWS services (`moto`):
+```bash
 pytest backend/tests -v
 ```
 
-### 2. Run Automated End-to-End Verification Pass
+#### 3. Run the End-to-End Verification Script
+Run the automated end-to-end verification script to validate upload, asynchronous event processing, DynamoDB storage, and result polling:
 ```bash
 python scripts/verify_e2e.py
 ```
-This runs an end-to-end verification pass that exercises the upload handler, queries the pending 202 status, simulates S3-event classification, checks result retrieval (200), confirms DynamoDB persistence, and validates structured logging.
 
-### 3. Run the Frontend Locally
+#### 4. Launch the Local Web UI
+Start the local server which serves the frontend and executes the Lambda handlers:
 ```bash
 python scripts/dev_server.py
 ```
-Navigate to `http://127.0.0.1:3000` in any web browser to test drag-and-drop uploads, active polling, and visual classification results.
+Open `http://127.0.0.1:3000` in your web browser. Drag and drop any image to see the upload, 2-second polling, and results display in action.
 
 ---
 
-## AWS Deployment Guide
+### AWS Cloud Deployment
 
-### 1. Configure AWS Credentials
-Ensure your local terminal has active AWS credentials:
-```bash
-aws configure
-# or export environment variables:
-export AWS_ACCESS_KEY_ID="your-access-key"
-export AWS_SECRET_ACCESS_KEY="your-secret-key"
-export AWS_DEFAULT_REGION="us-east-1"
-```
-
-### 2. Build the Application
-Compile all Lambda dependencies and packages:
+#### 1. Build the SAM Project
+Package all Lambda dependencies and SAM templates:
 ```bash
 sam build -t infrastructure/template.yaml
 ```
 
-### 3. Deploy Stack (Guided)
-Deploy to your AWS account using guided prompts:
+#### 2. Deploy to AWS (Guided)
+Deploy the CloudFormation stack to your AWS account:
 ```bash
 sam deploy --guided
 ```
-When prompted:
+Provide the following parameters when prompted:
 - **Stack Name**: `image-classifier-stack`
-- **AWS Region**: `us-east-1` (or your preferred region)
+- **AWS Region**: `us-east-1` (or your preferred AWS region)
 - **Confirm changes before deploy**: `Y`
 - **Allow SAM CLI IAM role creation**: `Y`
-- **Disable authorization confirmation for API**: `Y` (public demo endpoints)
+- **Disable authorization confirmation for API**: `Y`
 - **Save arguments to configuration file**: `Y`
 
-### 4. Configure the Frontend
-Once deployed, SAM outputs the API base URL:
+#### 3. Connect Frontend to the Cloud API
+Once deployment completes, note the `ApiEndpoint` output from CloudFormation:
 ```
 Key                 ApiEndpoint
 Description         API Gateway endpoint URL (dev stage)
 Value               https://<api-id>.execute-api.us-east-1.amazonaws.com/dev/
 ```
-Copy this URL into `frontend/app.js`:
+Update `frontend/app.js` with your deployed URL:
 ```javascript
 const API_BASE_URL = "https://<api-id>.execute-api.us-east-1.amazonaws.com/dev";
 ```
-Or create a `.env` file from `.env.example`.
+Or create a `.env` file based on `.env.example`:
+```bash
+cp .env.example .env
+```
 
 ---
 
-## Verification on AWS
+## Live Verification & Monitoring
 
 ### 1. Test via curl
 ```bash
 API_URL="https://<api-id>.execute-api.us-east-1.amazonaws.com/dev"
 
-# 1. Upload an image
+# Upload an image
 IMAGE_B64=$(base64 -w 0 path/to/image.jpg)
 UPLOAD_RES=$(curl -s -X POST "$API_URL/upload" \
   -H "Content-Type: application/json" \
   -d "{\"image\": \"$IMAGE_B64\"}")
-echo "Upload response: $UPLOAD_RES"
+echo "Upload Result: $UPLOAD_RES"
 
-# 2. Extract imageId and query result
+# Extract generated imageId
 IMAGE_ID=$(echo $UPLOAD_RES | grep -o '"imageId":"[^"]*' | cut -d'"' -f4)
+
+# Retrieve classification result
 curl -s -X GET "$API_URL/results/$IMAGE_ID"
 ```
 
-### 2. Check CloudWatch Logs
-Inspect Lambda logs in real time using SAM CLI:
+### 2. Inspect CloudWatch Logs
+Tail Lambda logs in real time:
 ```bash
-# Upload Lambda logs
+# Upload handler logs
 sam logs -n UploadFunction --stack-name image-classifier-stack --tail
 
-# Classification Lambda logs
+# Classification handler logs
 sam logs -n ClassifyImageFunction --stack-name image-classifier-stack --tail
 
-# Result Retrieval Lambda logs
+# Results retrieval logs
 sam logs -n GetResultsFunction --stack-name image-classifier-stack --tail
 ```
-Or via AWS CLI:
-```bash
-aws logs tail "/aws/lambda/image-classifier-stack-ClassifyImage" --follow
-```
 
-### 3. Inspect DynamoDB Table
-Verify that classification results are written to DynamoDB:
+### 3. Verify DynamoDB Persistence
+Query the DynamoDB table to inspect saved items:
 ```bash
-# Scan items in table
-aws dynamodb scan --table-name ClassificationResults
-
-# Query by imageId
-aws dynamodb get-item \
-  --table-name ClassificationResults \
-  --key "{\"imageId\": {\"S\": \"<imageId>\"}}"
+aws dynamodb scan --table-name ClassificationResults --region us-east-1
 ```
 
 ---
@@ -236,11 +205,11 @@ aws dynamodb get-item \
 ## Teardown & Cost Avoidance
 
 > [!WARNING]
-> While AWS Free Tier covers many Lambda, S3, and DynamoDB requests, active cloud resources can incur ongoing storage and API costs. Always tear down your stack when not in active use.
+> To prevent unexpected storage or API charges on AWS, always tear down the CloudFormation stack when testing is complete.
 
-Because CloudFormation cannot delete an S3 bucket that still contains objects, a dedicated teardown script is provided that safely empties the bucket before deleting the CloudFormation stack.
+CloudFormation requires S3 buckets to be completely empty before deleting them. Safe automated teardown scripts are provided:
 
-### Option A: Using the Automated Teardown Script (Recommended)
+### Automated Teardown Script
 
 #### Linux / macOS / Git Bash:
 ```bash
@@ -253,20 +222,7 @@ chmod +x scripts/destroy.sh
 .\scripts\destroy.ps1 -StackName image-classifier-stack -Region us-east-1
 ```
 
-### Option B: Manual Teardown via AWS CLI & SAM
-```bash
-# 1. Empty the S3 upload bucket
-BUCKET=$(aws cloudformation describe-stack-resource \
-  --stack-name image-classifier-stack \
-  --logical-resource-id ImageUploadBucket \
-  --query "StackResourceDetail.PhysicalResourceId" \
-  --output text)
-
-aws s3 rm "s3://$BUCKET" --recursive
-
-# 2. Delete the CloudFormation stack and all resources
-sam delete --stack-name image-classifier-stack --no-prompts
-```
+The script automatically locates the stack's S3 bucket, deletes all contained objects and versions, and invokes `sam delete --no-prompts` to delete all API Gateway, Lambda, DynamoDB, and IAM resources.
 
 ---
 
