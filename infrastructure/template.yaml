@@ -54,6 +54,10 @@ Resources:
     Properties:
       StageName: dev
       Description: Image Classifier REST API
+      Cors:
+        AllowMethods: "'GET,POST,OPTIONS'"
+        AllowHeaders: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+        AllowOrigin: "'*'"
 
   # -----------------------------------------------------------
   # Compute — S3-triggered classification Lambda
@@ -98,9 +102,9 @@ Resources:
     Type: AWS::Serverless::Function
     Properties:
       FunctionName: !Sub "${AWS::StackName}-Upload"
-      CodeUri: ../backend/upload/
+      CodeUri: ../backend/api/upload/
       Handler: app.lambda_handler
-      Description: Generates a pre-signed URL for S3 image upload
+      Description: Accepts base64 image and uploads to S3
       Environment:
         Variables:
           BUCKET_NAME: !Ref ImageUploadBucket
@@ -126,7 +130,7 @@ Resources:
     Type: AWS::Serverless::Function
     Properties:
       FunctionName: !Sub "${AWS::StackName}-GetResults"
-      CodeUri: ../backend/get_results/
+      CodeUri: ../backend/api/get_result/
       Handler: app.lambda_handler
       Description: Retrieves classification results from DynamoDB
       Environment:
